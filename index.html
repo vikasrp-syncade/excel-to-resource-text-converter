@@ -1,0 +1,781 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>MCF Excel → XML Converter</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  :root{
+    --ink:#1b1f23;
+    --paper:#fbfaf7;
+    --line:#d9d4c8;
+    --accent:#8a5a2b;
+    --accent-soft:#efe4d3;
+    --good:#2f6b3a;
+    --warn:#a1481a;
+    --mono: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family: "Iowan Old Style","Georgia", serif;
+    line-height:1.5;
+  }
+  header{
+    padding:28px 32px 20px;
+    border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg, #fff, var(--paper));
+  }
+  header h1{
+    margin:0 0 4px;
+    font-size:1.5rem;
+    font-weight:600;
+    letter-spacing:.2px;
+  }
+  header p{
+    margin:0;
+    color:#5b5348;
+    font-size:.95rem;
+    max-width:760px;
+  }
+  main{
+    max-width:1080px;
+    margin:0 auto;
+    padding:28px 24px 80px;
+  }
+  .card{
+    background:#fff;
+    border:1px solid var(--line);
+    border-radius:10px;
+    padding:22px 24px;
+    margin-bottom:22px;
+  }
+  .card h2{
+    margin:0 0 14px;
+    font-size:1.05rem;
+    display:flex;
+    align-items:center;
+    gap:10px;
+  }
+  .step-num{
+    display:inline-flex;
+    align-items:center;
+    justify-content:center;
+    width:24px;height:24px;
+    border-radius:50%;
+    background:var(--accent);
+    color:#fff;
+    font-size:.8rem;
+    font-family: var(--mono);
+    flex-shrink:0;
+  }
+  .dropzone{
+    border:1.5px dashed var(--line);
+    border-radius:8px;
+    padding:34px 20px;
+    text-align:center;
+    color:#6b6355;
+    cursor:pointer;
+    transition:border-color .15s, background .15s;
+    font-size:.95rem;
+  }
+  .dropzone.drag{
+    border-color:var(--accent);
+    background:var(--accent-soft);
+  }
+  .dropzone strong{color:var(--ink);}
+  input[type=file]{display:none;}
+  .file-pill{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    background:var(--accent-soft);
+    border:1px solid var(--line);
+    border-radius:20px;
+    padding:6px 14px;
+    font-size:.88rem;
+    margin-top:12px;
+  }
+  .row{display:flex;gap:24px;flex-wrap:wrap;align-items:flex-start;}
+  label.field{
+    display:flex;flex-direction:column;gap:6px;
+    font-size:.85rem;color:#5b5348;
+  }
+  input[type=text]{
+    font-family: var(--mono);
+    padding:8px 10px;
+    border:1px solid var(--line);
+    border-radius:6px;
+    font-size:.9rem;
+    min-width:180px;
+  }
+  table.blocks{
+    width:100%;
+    border-collapse:collapse;
+    font-size:.88rem;
+  }
+  table.blocks th{
+    text-align:left;
+    border-bottom:1px solid var(--line);
+    padding:8px 10px;
+    color:#5b5348;
+    font-weight:600;
+    font-size:.78rem;
+    text-transform:uppercase;
+    letter-spacing:.04em;
+  }
+  table.blocks td{
+    padding:7px 10px;
+    border-bottom:1px solid #eee7d9;
+    vertical-align:top;
+  }
+  table.blocks tr:hover td{background:#faf6ec;}
+  .mono{font-family:var(--mono);}
+  .badge{
+    display:inline-block;
+    padding:1px 8px;
+    border-radius:10px;
+    font-size:.72rem;
+    font-family: var(--mono);
+  }
+  .badge.ok{background:#e4f0e6;color:var(--good);}
+  .badge.warn{background:#f7e4d6;color:var(--warn);}
+  .toolbar{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    margin-bottom:12px;
+    gap:12px;
+    flex-wrap:wrap;
+  }
+  .toolbar .links a{
+    font-size:.82rem;
+    color:var(--accent);
+    cursor:pointer;
+    margin-right:14px;
+    text-decoration:underline;
+  }
+  button{
+    font-family:inherit;
+    font-size:.92rem;
+    padding:10px 20px;
+    border-radius:7px;
+    border:1px solid var(--accent);
+    background:var(--accent);
+    color:#fff;
+    cursor:pointer;
+  }
+  button:disabled{
+    opacity:.4;
+    cursor:not-allowed;
+  }
+  button.secondary{
+    background:#fff;
+    color:var(--accent);
+  }
+  .warnings{
+    background:#fdf3ea;
+    border:1px solid #ecd2b3;
+    border-radius:8px;
+    padding:14px 16px;
+    font-size:.85rem;
+    margin-bottom:18px;
+  }
+  .warnings h3{margin:0 0 6px;font-size:.85rem;color:var(--warn);}
+  .warnings ul{margin:0;padding-left:18px;}
+  pre#preview{
+    max-height:420px;
+    overflow:auto;
+    background:#20221f;
+    color:#e9e4d6;
+    padding:16px;
+    border-radius:8px;
+    font-family:var(--mono);
+    font-size:.78rem;
+    white-space:pre-wrap;
+    word-break:break-word;
+  }
+  .hidden{display:none !important;}
+  .muted{color:#8a8071;font-size:.85rem;}
+  .footer-note{
+    font-size:.8rem;
+    color:#8a8071;
+    text-align:center;
+    margin-top:26px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>MCF Excel → XML Converter</h1>
+  <p>Converts an MCF bulk-add workbook (Process Context blocks) into the site XML format used by the eBR/MES authoring tool — one <span class="mono">&lt;Resource&gt;</span> per Process Context, with <span class="mono">GroupItems</span> built from each "Applicable = Yes" row.</p>
+</header>
+
+<main>
+
+  <div class="card" id="step1">
+    <h2><span class="step-num">1</span>Upload workbook</h2>
+    <div class="dropzone" id="dropzone">
+      <div>Drag an <strong>.xlsx</strong> file here, or click to browse</div>
+      <input type="file" id="fileInput" accept=".xlsx,.xls" />
+    </div>
+    <div id="filePill"></div>
+    <div id="parseStatus" class="muted" style="margin-top:10px;"></div>
+  </div>
+
+  <div class="card hidden" id="step2">
+    <h2><span class="step-num">2</span>Review detected blocks &amp; settings</h2>
+
+    <div class="row" style="margin-bottom:18px;">
+      <label class="field">
+        Resource "user" attribute
+        <input type="text" id="userField" value="sa" />
+      </label>
+      <label class="field">
+        Resource Folder
+        <input type="text" id="resourceFolderField" value="" placeholder="e.g. TEST" />
+      </label>
+      <label class="field">
+        Sheet used
+        <select id="sheetSelect"></select>
+      </label>
+    </div>
+
+    <div id="warningsBox"></div>
+
+    <div class="toolbar">
+      <div class="links">
+        <a id="selectAll">Select all</a>
+        <a id="selectNone">Select none</a>
+      </div>
+      <span class="muted" id="selCount"></span>
+    </div>
+
+    <div style="max-height:360px; overflow:auto; border:1px solid var(--line); border-radius:8px;">
+      <table class="blocks">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Process Context (Resource id)</th>
+            <th>"Yes" rows</th>
+            <th>GroupItems</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody id="blocksBody"></tbody>
+      </table>
+    </div>
+
+    <div style="margin-top:20px;">
+      <button id="generateBtn">Generate XML</button>
+    </div>
+  </div>
+
+  <div class="card hidden" id="step3">
+    <h2><span class="step-num">3</span>Download</h2>
+    <div id="genWarnings"></div>
+    <div class="row" style="margin-bottom:14px;">
+      <button id="downloadBtn">Download XML file</button>
+      <button class="secondary" id="copyBtn">Copy to clipboard</button>
+    </div>
+    <div class="muted" style="margin-bottom:8px;" id="genSummary"></div>
+    <pre id="preview"></pre>
+  </div>
+
+</main>
+
+<div class="footer-note">Runs entirely in your browser — the workbook never leaves your machine.</div>
+
+<script>
+const TOP_CUSTOMCOLUMNS = "<CustomColumns>\n    <CustomColumn Name=\"SubClass\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"SignatureMode\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P1\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P2\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P3\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P4\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P5\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P6\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P7\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P8\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P9\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P10\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P11\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P12\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P13\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P14\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P15\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P16\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P17\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P18\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P19\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P20\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P21\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P22\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P23\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P24\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P25\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P26\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P27\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P28\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P29\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P30\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n  </CustomColumns>";
+
+const FOLDERS_BLOCK = "<Folders>\n    <Folder Name=\"ROOT-Groups\" GUID=\"E0415F1D-3903-4C6C-8099-6150151F4265\" />\n    <Folder Name=\"ROOT-Texts\" GUID=\"C807FD98-5467-4184-B75F-A67E5EE56DCD\" />\n  </Folders>";
+
+const DISPLAY_MESSAGE_RESOURCE = "<Resource id=\"DISPLAY_MESSAGE\" DefaultLanguage=\"English\" status=\"0\" ResourceType=\"T\" DateTimeStamp=\"2026-06-17T14:48:55.600\" version=\"13\" versionlabel=\"1.0_Development\" user=\"L060275\" CheckoutDateTimeStamp=\"2026-07-30T15:06:25.677\" UpdateTime=\"2026-06-17T14:48:55.600\" ResourceFolder=\"KINSALE_DBR\">\n    <Description />\n    <GroupItems />\n    <TagList>\n      <Tag tagname=\"||00Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||00Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||01Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||01Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||02Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||02Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||03Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||03Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||04Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||04Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||05Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||05Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||06Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||06Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||07Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||07Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||08Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||08Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||09Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||09Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||10Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||10Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||11Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||12Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||13Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n      <Tag tagname=\"||14Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" />\n    </TagList>\n    <CustomColumns />\n    <Objects>\n      <Object language=\"English\" Version=\"13\" DateTimeStamp=\"2026-06-17T14:48:55.597\">&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;I_HEADER_TEXT&amp;quot;&amp;gt;I_HEADER_TEXT : Value &amp;lt;/span&amp;gt;&amp;lt;br /&amp;gt;&amp;lt;span style=&amp;quot;font-size: 6pt&amp;quot;&amp;gt;&amp;amp;nbsp;&amp;lt;/span&amp;gt;&amp;lt;br /&amp;gt;$vbCrLf&amp;lt;table style=&amp;quot;width: 90%&amp;quot; cellspacing=&amp;quot;0&amp;quot; cellpadding=&amp;quot;5&amp;quot;&amp;gt;$vbCrLf&amp;lt;tbody&amp;gt;$vbCrLf&amp;lt;tr&amp;gt;$vbCrLf&amp;lt;td style=&amp;quot;font-size: 14pt; font-family: Tahoma; text-align: left&amp;quot;&amp;gt;&amp;lt;b&amp;gt;&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; style=&amp;quot;font-size: 14pt; color: darkblue&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;I_UNIT&amp;quot;&amp;gt;I_UNIT : Value &amp;lt;/span&amp;gt;&amp;lt;/b&amp;gt;&amp;lt;/td&amp;gt;$vbCrLf&amp;lt;td style=&amp;quot;font-size: 12pt; font-family: Tahoma; text-align: right&amp;quot;&amp;gt;&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; style=&amp;quot;font-size: 14pt&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;L_BOS_LINKS&amp;quot;&amp;gt;L_BOS_LINKS : Value &amp;lt;/span&amp;gt;&amp;lt;br /&amp;gt;&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; style=&amp;quot;font-size: 14pt&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;L_GHS_LINKS&amp;quot;&amp;gt;L_GHS_LINKS : Value &amp;lt;/span&amp;gt;&amp;lt;br /&amp;gt;&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; style=&amp;quot;font-size: 14pt&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;L_PPE_LINKS&amp;quot;&amp;gt;L_PPE_LINKS : Value &amp;lt;/span&amp;gt;&amp;lt;br /&amp;gt;&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; style=&amp;quot;font-size: 14pt; color: blue&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;L_SOP_LINKS&amp;quot;&amp;gt;L_SOP_LINKS : Value&amp;lt;/span&amp;gt;&amp;lt;/td&amp;gt;&amp;lt;/tr&amp;gt;&amp;lt;/tbody&amp;gt;&amp;lt;/table&amp;gt;&amp;lt;span style=&amp;quot;fo: 10pt&amp;quot;&amp;gt;&amp;lt;br /&amp;gt;&amp;lt;/span&amp;gt;||00Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||00Param||&amp;quot;&amp;gt;||00Param|| : Value&amp;lt;/span&amp;gt;||01Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||01Param||&amp;quot;&amp;gt;||01Param|| : Value&amp;lt;/span&amp;gt;||02Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||02Param||&amp;quot;&amp;gt;||02Param|| : Value&amp;lt;/span&amp;gt;||03Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||03Param||&amp;quot;&amp;gt;||03Param|| : Value&amp;lt;/span&amp;gt;||04Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||04Param||&amp;quot;&amp;gt;||04Param|| : Value&amp;lt;/span&amp;gt;||05Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||05Param||&amp;quot;&amp;gt;||05Param|| : Value&amp;lt;/span&amp;gt;||06Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||06Param||&amp;quot;&amp;gt;||06Param|| : Value&amp;lt;/span&amp;gt;||07Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||07Param||&amp;quot;&amp;gt;||07Param|| : Value&amp;lt;/span&amp;gt;||08Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||08Param||&amp;quot;&amp;gt;||08Param|| : Value&amp;lt;/span&amp;gt;||09Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||09Param||&amp;quot;&amp;gt;||09Param|| : Value&amp;lt;/span&amp;gt;||10Instructions||&amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;||10Param||&amp;quot;&amp;gt;||10Param|| : Value&amp;lt;/span&amp;gt;||11Instructions||||12Instructions||||13Instructions||||14Instructions||&amp;lt;br /&amp;gt;&amp;lt;br /&amp;gt;Signature Required: &amp;lt;span disabled=&amp;quot;&amp;quot; class=&amp;quot;RAParam&amp;quot; contenteditable=&amp;quot;false&amp;quot; raparamvalue=&amp;quot;Value&amp;quot; raparamname=&amp;quot;L_SIGNATURE_MODE&amp;quot;&amp;gt;L_SIGNATURE_MODE : Value &amp;lt;/span&amp;gt;<TagList><Tag tagname=\"||00Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||00Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||01Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||01Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||02Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||02Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||03Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||03Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||04Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||04Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||05Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||05Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||06Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||06Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||07Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||07Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||08Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||08Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||09Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||09Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||10Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||10Param||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||11Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||12Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||13Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /><Tag tagname=\"||14Instructions||\" tagvalue=\"\" tagdescription=\"\" language=\"English\" /></TagList></Object>\n    </Objects>\n  </Resource>";
+
+const RESOURCE_FOOTER = "<TagList>\n      <Tag tagname=\"Signature Mode\" tagvalue=\"0\" tagdescription=\"NOSIGNATURE\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"1\" tagdescription=\"OPERATOR\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"2\" tagdescription=\"SUPERVISOR\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"3\" tagdescription=\"OPERATOR_AND_VERIFIER\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"4\" tagdescription=\"OPERATOR_AND_SUPERVISOR\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"5\" tagdescription=\"QA\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"6\" tagdescription=\"OPERATOR_AND_QA\" />\n      <Tag tagname=\"Signature Mode\" tagvalue=\"7\" tagdescription=\"OPERATOR_AND_SUPERVISOR_AND_QA\" />\n    </TagList>\n    <CustomColumns>\n      <CustomColumn Name=\"SubClass\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"SignatureMode\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P1\" ColumnHeader=\"SOP Name\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P2\" ColumnHeader=\"Basis of Safety\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P3\" ColumnHeader=\"Material Code for GHS\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P4\" ColumnHeader=\"Hazard\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P5\" ColumnHeader=\"PPE Name\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P6\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P7\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P8\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P9\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P10\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n      <CustomColumn Name=\"P11\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P12\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P13\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P14\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P15\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P16\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P17\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P18\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P19\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P20\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P21\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P22\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P23\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P24\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P25\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P26\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P27\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P28\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P29\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n      <CustomColumn Name=\"P30\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"False\" />\n    </CustomColumns>\n    <Objects />";
+
+// ============ CONFIG ============
+
+// Text found in the "Signatures" column -> Signature Mode code (see Signature Mode lookup table)
+const SIG_MAP = {
+  "operator [op]": "1",
+  "op + verifier [ver]": "3"
+};
+
+const ITEM_STEP = 10;       // GroupItem "item" numbers increment by this (0,10,20,...)
+
+// HTML snippet that replaces every occurrence of "CAUTION:" (or "CAUTION") found
+// in an Instructions cell. Inserted verbatim, including its own trailing <br/><br/>.
+const CAUTION_SNIPPET =
+  '<span>   <svg width="32" height="32" viewBox="0 0 24 24" fill="none"        xmlns="http://www.w3.org/2000/svg"        style="vertical-align: middle; margin-right: 6px;">     ' +
+  '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"           fill="#F59E0B" stroke="#B45309" stroke-width="1"/>     ' +
+  '<line x1="12" y1="9" x2="12" y2="13" stroke="#78350F" stroke-width="2" stroke-linecap="round"/>     ' +
+  '<circle cx="12" cy="16.5" r="1" fill="#78350F"/>   </svg>   <b>CAUTION:</b> </span> <br/><br/>';
+
+let generatedXml = "";
+
+
+// ============ HELPERS ============
+
+function escAttr(s) {
+  if (s === null || s === undefined) return "";
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function cellText(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).trim();
+}
+
+function instructionsToTagValue(v) {
+  if (v === null || v === undefined) return "";
+  let s = String(v).replace(/\r\n/g, "\n").replace(/\n/g, " ");
+  s = s.replace(/CAUTION:?/g, CAUTION_SNIPPET);
+  return s;
+}
+
+function firstLine(v) {
+  if (v === null || v === undefined) return "";
+  return String(v).split(/\r\n|\n/)[0];
+}
+
+function pad2(n) { return String(n).padStart(2, "0"); }
+
+function nowStamp() {
+  const d = new Date();
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) +
+    "T" + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()) +
+    "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+
+// ============ WORKBOOK PARSING ============
+
+// Locate the aligned table (row with many "Specific" cells, followed by a row
+// whose value is "Applicable" marking the start of each Process Context block)
+// and extract every block: id, and per-row data for Applicable/Instructions/
+// Parameters/Signatures/BoS/Hazard/PPE/SOP.
+function findBlocksInSheet(aoa) {
+  const nRows = aoa.length;
+  let specificRowIdx = -1;
+  for (let r = 0; r < nRows; r++) {
+    const row = aoa[r] || [];
+    let count = 0;
+    for (const cell of row) if (cellText(cell) === "Specific") count++;
+    if (count >= 2) { specificRowIdx = r; break; }
+  }
+  if (specificRowIdx === -1) return null;
+
+  const labelRowIdx = specificRowIdx + 1;
+  const labelRow = aoa[labelRowIdx] || [];
+  const specificRow = aoa[specificRowIdx] || [];
+  const nCols = Math.max(labelRow.length, specificRow.length);
+
+  const blocks = [];
+  let col = 0;
+  while (col < nCols) {
+    if (cellText(specificRow[col]) === "Specific" && cellText(labelRow[col]) === "Applicable") {
+      // gather this block's sub-columns until next "Applicable" or specificRow stops
+      const colMap = {};
+      let c = col;
+      let first = true;
+      while (c < nCols && cellText(specificRow[c]) === "Specific" && (first || cellText(labelRow[c]) !== "Applicable")) {
+        const label = cellText(labelRow[c]);
+        if (label) colMap[label] = c;
+        first = false;
+        c++;
+      }
+      // find id: first non-null cell above specificRow in this column
+      let id = null;
+      for (let r = 0; r < specificRowIdx; r++) {
+        const v = aoa[r] ? aoa[r][col] : null;
+        if (cellText(v)) { id = cellText(v); break; }
+      }
+      if (id) {
+        blocks.push({ startCol: col, colMap: colMap, id: id });
+      }
+      col = c;
+    } else {
+      col++;
+    }
+  }
+
+  if (blocks.length === 0) return null;
+
+  // extract row data for each block
+  const dataStartRow = labelRowIdx + 1;
+  for (const block of blocks) {
+    const rows = [];
+    const get = (label, r) => {
+      const c = block.colMap[label];
+      if (c === undefined) return "";
+      return aoa[r] ? cellText(aoa[r][c]) : "";
+    };
+    for (let r = dataStartRow; r < nRows; r++) {
+      const applicable = get("Applicable", r);
+      if (applicable) {
+        rows.push({
+          applicable: applicable,
+          instructions: get("Instructions", r),
+          parameters: get("Parameters", r),
+          signatures: get("Signatures", r),
+          bos: get("BoS", r),
+          hazard: get("Hazard", r),
+          ppe: get("PPE", r),
+          sop: get("SOP", r)
+        });
+      }
+    }
+    block.rows = rows;
+    block.yesRows = rows.filter(r => r.applicable.toLowerCase() === "yes");
+  }
+
+  return blocks;
+}
+
+function parseWorkbook(workbook) {
+  // Compute block-detection results for every sheet so the user can switch freely.
+  const perSheet = {}; // sheetName -> blocks array (or null if none found)
+  let bestSheet = null;
+  let bestBlocks = null;
+  for (const sheetName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sheetName];
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: null });
+    const blocks = findBlocksInSheet(aoa);
+    perSheet[sheetName] = blocks; // may be null
+    if (blocks && blocks.length > 0) {
+      if (!bestBlocks || blocks.length > bestBlocks.length) {
+        bestSheet = sheetName;
+        bestBlocks = blocks;
+      }
+    }
+  }
+  return {
+    sheetNames: workbook.SheetNames,
+    perSheet: perSheet,
+    defaultSheet: bestSheet
+  };
+}
+
+// ============ XML GENERATION ============
+
+function buildTagListXml(instructionsVal, paramVal) {
+  const lines = [];
+  for (let i = 0; i <= 10; i++) {
+    const idx = pad2(i);
+    if (i === 0) {
+      lines.push(`          <Tag tagname="||00Instructions||" tagvalue="${escAttr(instructionsVal)}" tagdescription="" language="English" />`);
+      lines.push(`          <Tag tagname="||00Param||" tagvalue="${escAttr(paramVal)}" tagdescription="" language="English" />`);
+    } else {
+      lines.push(`          <Tag tagname="||${idx}Instructions||" tagvalue="" tagdescription="" language="English" />`);
+      lines.push(`          <Tag tagname="||${idx}Param||" tagvalue="" tagdescription="" language="English" />`);
+    }
+  }
+  // Extra Instructions-only tags (no Param) present in the DISPLAY_MESSAGE template
+  for (let i = 11; i <= 14; i++) {
+    lines.push(`          <Tag tagname="||${i}Instructions||" tagvalue="" tagdescription="" language="English" />`);
+  }
+  return lines.join("\n");
+}
+
+function buildGroupItem(itemNumber, rowData) {
+  let sig = "";
+  let p1 = "", p2 = "", p3 = "", p4 = "", p5 = "";
+  let instructionsVal = "", paramVal = "";
+  const warnings = [];
+
+  if (rowData.signatures) {
+    const key = rowData.signatures.toLowerCase();
+    if (SIG_MAP.hasOwnProperty(key)) {
+      sig = SIG_MAP[key];
+    } else {
+      warnings.push(`Unmapped Signatures value "${rowData.signatures}" (item ${itemNumber}) — left sig blank.`);
+    }
+  }
+  p1 = firstLine(rowData.sop);
+  p2 = rowData.bos || "";
+  p3 = "";
+  p4 = rowData.hazard || "";
+  p5 = rowData.ppe || "";
+  instructionsVal = instructionsToTagValue(rowData.instructions);
+  paramVal = instructionsToTagValue(rowData.parameters);
+
+  // Columns with no value show "N/A" (matches p11-p30 convention)
+  const naIfBlank = v => (v === null || v === undefined || v === "") ? "N/A" : v;
+  const pAttrs = [p1, p2, p3, p4, p5].map(v => escAttr(naIfBlank(v)));
+  let midBlank = "";
+  for (let i = 6; i <= 10; i++) midBlank += ` p${i}="N/A"`;
+  let naTail = "";
+  for (let i = 11; i <= 30; i++) naTail += ` p${i}="N/A"`;
+
+  const groupItem =
+`      <GroupItem item="${itemNumber}" id="DISPLAY_MESSAGE" class="DISPLAY_MESSAGE" subclass="" sig="${sig}" p1="${pAttrs[0]}" p2="${pAttrs[1]}" p3="${pAttrs[2]}" p4="${pAttrs[3]}" p5="${pAttrs[4]}"${midBlank}${naTail}>
+        <TagList>
+${buildTagListXml(instructionsVal, paramVal)}
+        </TagList>
+      </GroupItem>`;
+
+  return { xml: groupItem, warnings: warnings };
+}
+
+function rowHasContent(rowData) {
+  return !!(rowData.instructions && rowData.instructions.trim() !== "");
+}
+
+function buildResourceForBlock(block, userVal, resourceFolderVal, ts) {
+  const contentRows = block.yesRows.filter(rowHasContent);
+  const groupItemsXml = [];
+  const warnings = [];
+
+  contentRows.forEach((rowData, i) => {
+    const itemNumber = i * ITEM_STEP;
+    const { xml, warnings: w } = buildGroupItem(itemNumber, rowData);
+    groupItemsXml.push(xml);
+    warnings.push(...w.map(msg => `[${block.id}] ${msg}`));
+  });
+
+  const groupItemsBlock = groupItemsXml.length
+    ? `<GroupItems>\n${groupItemsXml.join("\n")}\n    </GroupItems>`
+    : `<GroupItems />`;
+
+  if (groupItemsXml.length === 0) {
+    warnings.push(`[${block.id}] has no rows with actual content — Resource generated with empty GroupItems.`);
+  }
+
+  const resource =
+`  <Resource id="${escAttr(block.id)}" DefaultLanguage="English" status="1" ResourceType="G" DateTimeStamp="${ts}" version="1" versionlabel="" user="${escAttr(userVal)}" CheckoutDateTimeStamp="${ts}" UpdateTime="${ts}" ResourceFolder="${escAttr(resourceFolderVal)}">
+    <Description />
+    ${groupItemsBlock}
+    ${RESOURCE_FOOTER}
+  </Resource>`;
+
+  return { xml: resource, warnings: warnings };
+}
+
+function generateFullXml(selectedBlocks, userVal, resourceFolderVal) {
+  const ts = nowStamp();
+  const resourceXmls = [];
+  const allWarnings = [];
+
+  for (const block of selectedBlocks) {
+    const contentCount = block.yesRows.filter(rowHasContent).length;
+    if (contentCount === 0) {
+      allWarnings.push(`[${block.id}] has no "Yes" rows with actual content — no GroupItems will be generated.`);
+    }
+    const { xml, warnings } = buildResourceForBlock(block, userVal, resourceFolderVal, ts);
+    resourceXmls.push(xml);
+    allWarnings.push(...warnings);
+  }
+
+  const xml =
+`<?xml version="1.0" encoding="utf-8"?>
+<Site id="default" DefaultLanguage="English" Version="6.1">
+  ${TOP_CUSTOMCOLUMNS}
+  ${DISPLAY_MESSAGE_RESOURCE}
+${resourceXmls.join("\n")}
+  ${FOLDERS_BLOCK}
+</Site>`;
+
+  return { xml: xml, warnings: allWarnings };
+}
+
+// ============ UI WIRING ============
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("fileInput");
+const filePill = document.getElementById("filePill");
+const parseStatus = document.getElementById("parseStatus");
+const step2 = document.getElementById("step2");
+const step3 = document.getElementById("step3");
+const sheetSelect = document.getElementById("sheetSelect");
+const blocksBody = document.getElementById("blocksBody");
+const warningsBox = document.getElementById("warningsBox");
+const selCount = document.getElementById("selCount");
+const generateBtn = document.getElementById("generateBtn");
+const userField = document.getElementById("userField");
+const resourceFolderField = document.getElementById("resourceFolderField");
+const downloadBtn = document.getElementById("downloadBtn");
+const copyBtn = document.getElementById("copyBtn");
+const preview = document.getElementById("preview");
+const genSummary = document.getElementById("genSummary");
+const genWarnings = document.getElementById("genWarnings");
+
+let parsedWorkbook = null;   // { sheetNames, perSheet, defaultSheet }
+let currentSheetName = null;
+
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("drag"); });
+dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+dropzone.addEventListener("drop", (e) => {
+  e.preventDefault();
+  dropzone.classList.remove("drag");
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener("change", (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  filePill.innerHTML = `<span class="file-pill">📄 ${file.name}</span>`;
+  parseStatus.textContent = "Parsing workbook…";
+  step2.classList.add("hidden");
+  step3.classList.add("hidden");
+
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, { type: "array", cellText: true });
+      const result = parseWorkbook(workbook);
+      if (!result.defaultSheet) {
+        parseStatus.innerHTML = `<span style="color:var(--warn)">Could not find a Process Context table in any sheet of this workbook (looking for a row of "Specific" headers followed by an "Applicable" column). You can still pick a sheet manually below to double-check.</span>`;
+      } else {
+        parseStatus.textContent = `Found Process Context block(s) — pick the sheet to use below if needed.`;
+      }
+      parsedWorkbook = result;
+      populateSheetSelect();
+      step2.classList.remove("hidden");
+    } catch (err) {
+      parseStatus.innerHTML = `<span style="color:var(--warn)">Error parsing file: ${err.message}</span>`;
+      console.error(err);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function populateSheetSelect() {
+  sheetSelect.innerHTML = "";
+  parsedWorkbook.sheetNames.forEach(name => {
+    const blocks = parsedWorkbook.perSheet[name];
+    const opt = document.createElement("option");
+    opt.value = name;
+    opt.textContent = blocks && blocks.length > 0
+      ? `${name} (${blocks.length} block${blocks.length === 1 ? "" : "s"} found)`
+      : `${name} (no blocks detected)`;
+    sheetSelect.appendChild(opt);
+  });
+  currentSheetName = parsedWorkbook.defaultSheet || parsedWorkbook.sheetNames[0];
+  sheetSelect.value = currentSheetName;
+  renderBlocks();
+}
+
+sheetSelect.addEventListener("change", () => {
+  currentSheetName = sheetSelect.value;
+  renderBlocks();
+});
+
+function currentBlocks() {
+  return parsedWorkbook.perSheet[currentSheetName] || [];
+}
+
+function renderBlocks() {
+  blocksBody.innerHTML = "";
+  warningsBox.innerHTML = "";
+
+  const blocks = currentBlocks();
+
+  if (blocks.length === 0) {
+    warningsBox.innerHTML = `<div class="warnings"><h3>⚠ No blocks in this sheet</h3><ul><li>No Process Context table was detected in "${currentSheetName}". Pick a different sheet above.</li></ul></div>`;
+    updateSelCount();
+    return;
+  }
+
+  const dupIds = {};
+  blocks.forEach(b => { dupIds[b.id] = (dupIds[b.id] || 0) + 1; });
+  const dupWarnings = Object.entries(dupIds).filter(([id, n]) => n > 1).map(([id, n]) => `Resource id "${id}" appears ${n} times — duplicates will produce duplicate Resource ids in the output.`);
+  if (dupWarnings.length) {
+    warningsBox.innerHTML = `<div class="warnings"><h3>⚠ Data warnings</h3><ul>${dupWarnings.map(w => `<li>${w}</li>`).join("")}</ul></div>`;
+  }
+
+  blocks.forEach((block, i) => {
+    const tr = document.createElement("tr");
+    const contentCount = block.yesRows.filter(rowHasContent).length;
+    tr.innerHTML = `
+      <td><input type="checkbox" class="blockChk" data-idx="${i}" checked /></td>
+      <td class="mono">${block.id}</td>
+      <td>${block.yesRows.length}</td>
+      <td>${contentCount}</td>
+      <td>${contentCount === 0 ? '<span class="badge warn">no content</span>' : '<span class="badge ok">ok</span>'}</td>
+    `;
+    blocksBody.appendChild(tr);
+  });
+
+  updateSelCount();
+  document.querySelectorAll(".blockChk").forEach(chk => chk.addEventListener("change", updateSelCount));
+}
+
+function updateSelCount() {
+  const total = document.querySelectorAll(".blockChk").length;
+  const checked = document.querySelectorAll(".blockChk:checked").length;
+  selCount.textContent = `${checked} of ${total} selected`;
+}
+
+document.getElementById("selectAll").addEventListener("click", () => {
+  document.querySelectorAll(".blockChk").forEach(c => c.checked = true);
+  updateSelCount();
+});
+document.getElementById("selectNone").addEventListener("click", () => {
+  document.querySelectorAll(".blockChk").forEach(c => c.checked = false);
+  updateSelCount();
+});
+
+generateBtn.addEventListener("click", () => {
+  const blocks = currentBlocks();
+  const selectedIdx = Array.from(document.querySelectorAll(".blockChk:checked")).map(c => parseInt(c.dataset.idx, 10));
+  if (selectedIdx.length === 0) {
+    alert("Select at least one Process Context block.");
+    return;
+  }
+  const selectedBlocks = selectedIdx.map(i => blocks[i]);
+  const userVal = userField.value || "sa";
+  const resourceFolderVal = resourceFolderField.value || "";
+
+  const { xml, warnings } = generateFullXml(selectedBlocks, userVal, resourceFolderVal);
+  generatedXml = xml;
+  preview.textContent = xml;
+  genSummary.textContent = `${selectedBlocks.length} Resource(s) generated.`;
+
+  if (warnings.length) {
+    genWarnings.innerHTML = `<div class="warnings"><h3>⚠ Conversion warnings</h3><ul>${warnings.map(w => `<li>${w}</li>`).join("")}</ul></div>`;
+  } else {
+    genWarnings.innerHTML = "";
+  }
+
+  step3.classList.remove("hidden");
+  step3.scrollIntoView({ behavior: "smooth" });
+});
+
+downloadBtn.addEventListener("click", () => {
+  const blob = new Blob([generatedXml], { type: "application/xml" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "converted_output.xml";
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+
+copyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(generatedXml);
+    copyBtn.textContent = "Copied!";
+    setTimeout(() => { copyBtn.textContent = "Copy to clipboard"; }, 1500);
+  } catch (err) {
+    alert("Could not copy automatically — please select the text in the preview box and copy manually.");
+  }
+});
+
+
+</script>
+</body>
+</html>
