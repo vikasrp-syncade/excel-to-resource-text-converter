@@ -4,7 +4,6 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>MCF Excel → XML Converter</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --ink:#1b1f23;
@@ -291,6 +290,194 @@
 <div class="footer-note">Runs entirely in your browser — the workbook never leaves your machine.</div>
 
 <script>
+// ============ SELF-CONTAINED .XLSX READER ============
+// No external libraries or CDN scripts — everything runs from code already in
+// this file, using only built-in browser APIs (DecompressionStream, DOMParser).
+// This avoids failures on networks that block third-party script hosts.
+const XLSX = (function () {
+  function readUint16(view, off) { return view.getUint16(off, true); }
+  function readUint32(view, off) { return view.getUint32(off, true); }
+
+  function colLetterToIndex(letters) {
+    let idx = 0;
+    for (let i = 0; i < letters.length; i++) idx = idx * 26 + (letters.charCodeAt(i) - 64);
+    return idx - 1; // zero-based
+  }
+
+  function parseCellRef(ref) {
+    let i = 0;
+    while (i < ref.length && ref[i] >= "A" && ref[i] <= "Z") i++;
+    return { col: colLetterToIndex(ref.substring(0, i)), row: parseInt(ref.substring(i), 10) - 1 };
+  }
+
+  async function inflateRaw(bytes) {
+    if (typeof DecompressionStream === "undefined") {
+      throw new Error("This browser doesn't support built-in decompression (DecompressionStream). Please use a recent version of Chrome, Edge, or Firefox.");
+    }
+    const ds = new DecompressionStream("deflate-raw");
+    const stream = new Blob([bytes]).stream().pipeThrough(ds);
+    const buf = await new Response(stream).arrayBuffer();
+    return new Uint8Array(buf);
+  }
+
+  function findEOCD(view, len) {
+    const maxBack = Math.min(len, 66000);
+    for (let i = len - 22; i >= len - maxBack; i--) {
+      if (i < 0) break;
+      if (readUint32(view, i) === 0x06054b50) return i;
+    }
+    throw new Error("Not a valid .xlsx file (ZIP End Of Central Directory not found).");
+  }
+
+  function parseCentralDirectory(buf) {
+    const view = new DataView(buf);
+    const len = buf.byteLength;
+    const eocdOff = findEOCD(view, len);
+    const cdOffset = readUint32(view, eocdOff + 16);
+    const cdSize = readUint32(view, eocdOff + 12);
+    const entries = [];
+    let off = cdOffset;
+    const end = cdOffset + cdSize;
+    const dec = new TextDecoder("utf-8");
+    while (off < end) {
+      const sig = readUint32(view, off);
+      if (sig !== 0x02014b50) break;
+      const compressionMethod = readUint16(view, off + 10);
+      const compressedSize = readUint32(view, off + 20);
+      const uncompressedSize = readUint32(view, off + 24);
+      const nameLen = readUint16(view, off + 28);
+      const extraLen = readUint16(view, off + 30);
+      const commentLen = readUint16(view, off + 32);
+      const localHeaderOffset = readUint32(view, off + 42);
+      const nameBytes = new Uint8Array(buf, off + 46, nameLen);
+      entries.push({ name: dec.decode(nameBytes), compressionMethod, compressedSize, uncompressedSize, localHeaderOffset });
+      off += 46 + nameLen + extraLen + commentLen;
+    }
+    return entries;
+  }
+
+  async function extractEntry(buf, entry) {
+    const view = new DataView(buf);
+    const lh = entry.localHeaderOffset;
+    if (readUint32(view, lh) !== 0x04034b50) throw new Error("Bad ZIP local file header for " + entry.name);
+    const nameLen = readUint16(view, lh + 26);
+    const extraLen = readUint16(view, lh + 28);
+    const dataStart = lh + 30 + nameLen + extraLen;
+    const compBytes = new Uint8Array(buf, dataStart, entry.compressedSize);
+    if (entry.compressionMethod === 0) return compBytes.slice();
+    if (entry.compressionMethod === 8) return await inflateRaw(compBytes);
+    throw new Error("Unsupported ZIP compression method: " + entry.compressionMethod);
+  }
+
+  function parseSheetXmlToAOA(xml, sharedStrings, parser) {
+    const doc = parser.parseFromString(xml, "application/xml");
+    const rowNodes = Array.from(doc.getElementsByTagName("row"));
+    const rows = [];
+    let maxCol = 0;
+
+    rowNodes.forEach((rowNode, seq) => {
+      const rAttr = rowNode.getAttribute("r");
+      const rowIdx = rAttr ? parseInt(rAttr, 10) - 1 : seq;
+      const cells = Array.from(rowNode.getElementsByTagName("c"));
+      const rowArr = [];
+      cells.forEach((c, cellSeq) => {
+        const ref = c.getAttribute("r");
+        const colIdx = ref ? parseCellRef(ref).col : cellSeq;
+        const t = c.getAttribute("t");
+        let value = null;
+        if (t === "s") {
+          const vNode = c.getElementsByTagName("v")[0];
+          const idx = vNode ? parseInt(vNode.textContent, 10) : -1;
+          value = (idx >= 0 && sharedStrings[idx] !== undefined) ? sharedStrings[idx] : "";
+        } else if (t === "inlineStr") {
+          const isNode = c.getElementsByTagName("is")[0];
+          if (isNode) value = Array.from(isNode.getElementsByTagName("t")).map(tn => tn.textContent).join("");
+        } else {
+          const vNode = c.getElementsByTagName("v")[0];
+          value = vNode ? vNode.textContent : null;
+        }
+        rowArr[colIdx] = value;
+        if (colIdx + 1 > maxCol) maxCol = colIdx + 1;
+      });
+      rows[rowIdx] = rowArr;
+    });
+
+    const aoa = [];
+    for (let r = 0; r < rows.length; r++) {
+      const rowArr = rows[r] || [];
+      const normalized = [];
+      for (let c = 0; c < maxCol; c++) normalized[c] = (rowArr[c] === undefined) ? null : rowArr[c];
+      aoa.push(normalized);
+    }
+    return aoa;
+  }
+
+  async function readXlsxZip(arrayBuffer) {
+    const entries = parseCentralDirectory(arrayBuffer);
+    const byName = {};
+    entries.forEach(e => byName[e.name] = e);
+    const dec = new TextDecoder("utf-8");
+
+    async function getText(name) {
+      const e = byName[name];
+      if (!e) return null;
+      return dec.decode(await extractEntry(arrayBuffer, e));
+    }
+
+    const workbookXml = await getText("xl/workbook.xml");
+    if (!workbookXml) throw new Error("Not a valid .xlsx file (missing xl/workbook.xml).");
+    const relsXml = await getText("xl/_rels/workbook.xml.rels");
+    const sharedStringsXml = await getText("xl/sharedStrings.xml");
+
+    const parser = new DOMParser();
+    const wbDoc = parser.parseFromString(workbookXml, "application/xml");
+    const sheetMeta = Array.from(wbDoc.getElementsByTagName("sheet")).map(n => ({
+      name: n.getAttribute("name"),
+      rId: n.getAttribute("r:id")
+    }));
+
+    let ridToTarget = {};
+    if (relsXml) {
+      const relsDoc = parser.parseFromString(relsXml, "application/xml");
+      Array.from(relsDoc.getElementsByTagName("Relationship")).forEach(r => {
+        ridToTarget[r.getAttribute("Id")] = r.getAttribute("Target");
+      });
+    }
+
+    let sharedStrings = [];
+    if (sharedStringsXml) {
+      const ssDoc = parser.parseFromString(sharedStringsXml, "application/xml");
+      sharedStrings = Array.from(ssDoc.getElementsByTagName("si")).map(si =>
+        Array.from(si.getElementsByTagName("t")).map(t => t.textContent).join(""));
+    }
+
+    const SheetNames = sheetMeta.map(s => s.name);
+    const Sheets = {};
+    for (const meta of sheetMeta) {
+      let target = ridToTarget[meta.rId];
+      if (!target) { Sheets[meta.name] = []; continue; }
+      target = target.replace(/^\/+/, "");
+      if (!target.startsWith("xl/")) target = "xl/" + target.replace(/^\.?\/*/, "");
+      const sheetXml = await getText(target);
+      Sheets[meta.name] = sheetXml ? parseSheetXmlToAOA(sheetXml, sharedStrings, parser) : [];
+    }
+    return { SheetNames, Sheets };
+  }
+
+  return {
+    // Mirrors just enough of SheetJS's API surface for this app's needs.
+    // Reading a .xlsx requires async decompression, so this returns a Promise
+    // (unlike SheetJS's synchronous XLSX.read) — call sites must await it.
+    readAsync: async function (data) {
+      const buf = data.buffer ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength) : data;
+      return await readXlsxZip(buf);
+    },
+    utils: {
+      sheet_to_json: function (ws) { return ws; } // ws is already the AOA array here
+    }
+  };
+})();
+
 const TOP_CUSTOMCOLUMNS = "<CustomColumns>\n    <CustomColumn Name=\"SubClass\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"SignatureMode\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P1\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P2\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P3\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P4\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P5\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P6\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P7\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P8\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P9\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P10\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P11\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P12\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P13\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P14\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P15\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P16\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P17\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P18\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P19\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P20\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P21\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P22\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P23\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P24\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P25\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P26\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P27\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P28\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P29\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n    <CustomColumn Name=\"P30\" ColumnHeader=\"\" ValidValues=\"\" Visible=\"True\" />\n  </CustomColumns>";
 
 const FOLDERS_BLOCK = "<Folders>\n    <Folder Name=\"ROOT-Groups\" GUID=\"E0415F1D-3903-4C6C-8099-6150151F4265\" />\n    <Folder Name=\"ROOT-Texts\" GUID=\"C807FD98-5467-4184-B75F-A67E5EE56DCD\" />\n  </Folders>";
@@ -307,15 +494,24 @@ const SIG_MAP = {
   "op + verifier [ver]": "3"
 };
 
-const ITEM_STEP = 10;       // GroupItem "item" numbers increment by this (0,10,20,...)
+const ITEM_STEP = 5;        // GroupItem "item" numbers increment by this (0,5,10,15,...)
+
+// Shared warning-triangle icon reused by both CAUTION and "Safety Critical Task" formatting.
+const WARNING_ICON_SVG =
+  '<svg width="32" height="32" viewBox="0 0 24 24" fill="none"        xmlns="http://www.w3.org/2000/svg"        style="vertical-align: middle; margin-right: 6px;">     ' +
+  '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"           fill="#F59E0B" stroke="#B45309" stroke-width="1"/>     ' +
+  '<line x1="12" y1="9" x2="12" y2="13" stroke="#78350F" stroke-width="2" stroke-linecap="round"/>     ' +
+  '<circle cx="12" cy="16.5" r="1" fill="#78350F"/>   </svg>';
 
 // HTML snippet that replaces every occurrence of "CAUTION:" (or "CAUTION") found
 // in an Instructions cell. Inserted verbatim, including its own trailing <br/><br/>.
 const CAUTION_SNIPPET =
-  '<span>   <svg width="32" height="32" viewBox="0 0 24 24" fill="none"        xmlns="http://www.w3.org/2000/svg"        style="vertical-align: middle; margin-right: 6px;">     ' +
-  '<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"           fill="#F59E0B" stroke="#B45309" stroke-width="1"/>     ' +
-  '<line x1="12" y1="9" x2="12" y2="13" stroke="#78350F" stroke-width="2" stroke-linecap="round"/>     ' +
-  '<circle cx="12" cy="16.5" r="1" fill="#78350F"/>   </svg>   <b>CAUTION:</b> </span> <br/><br/>';
+  `<span>   ${WARNING_ICON_SVG}   <b style="font-size:12pt;">CAUTION:</b> </span> <br/><br/>`;
+
+// HTML snippet that replaces "Safety Critical Task" (any casing) — same icon as CAUTION,
+// forced to Title Case, bold + red.
+const SAFETY_CRITICAL_SNIPPET =
+  `<span>   ${WARNING_ICON_SVG}   <b style="font-size:12pt; color:red;">Safety Critical Task</b></span>`;
 
 let generatedXml = "";
 
@@ -336,11 +532,48 @@ function cellText(v) {
   return String(v).trim();
 }
 
-function instructionsToTagValue(v) {
+// Plain newline normalization only — used for columns that don't get rich formatting (e.g. Parameters).
+function normalizeNewlines(v) {
   if (v === null || v === undefined) return "";
-  let s = String(v).replace(/\r\n/g, "\n").replace(/\n/g, " ");
+  return String(v).replace(/\r\n/g, "\n").replace(/\n/g, " ");
+}
+
+// Bold the sentence/phrase containing the word "Error"; the word itself additionally
+// gets red color + underline (bold is inherited from the phrase wrapper).
+function formatErrorPhrases(text) {
+  return text.replace(/[^.!?]*\bError\b[^.!?]*[.!?]?/gi, (phrase) => {
+    const styled = phrase.replace(/\bError\b/gi,
+      (w) => `<span style="font-size:12pt; color:red; text-decoration:underline;">${w}</span>`);
+    return `<b style="font-size:12pt;">${styled}</b>`;
+  });
+}
+
+// Replace "Safety Critical Task" (any casing) with the icon + red/bold/title-case snippet.
+function formatSafetyCriticalTask(text) {
+  return text.replace(/safety critical task/gi, () => SAFETY_CRITICAL_SNIPPET);
+}
+
+// Bold the word "Note" wherever it appears (preserving its original casing).
+function formatNoteWord(text) {
+  return text.replace(/\bNote\b/gi, (w) => `<b style="font-size:12pt;">${w}</b>`);
+}
+
+// Full instruction formatting pipeline: newline normalization, then Error/Safety-Critical-
+// Task/Note/CAUTION keyword formatting, then wrap everything in a 12pt base span.
+function formatInstructionsText(v) {
+  if (v === null || v === undefined) return "";
+  let s = normalizeNewlines(v);
+  s = formatErrorPhrases(s);
+  s = formatSafetyCriticalTask(s);
+  s = formatNoteWord(s);
   s = s.replace(/CAUTION:?/g, CAUTION_SNIPPET);
-  return s;
+  return `<span style="font-size:12pt;">${s}</span>`;
+}
+
+// Instructions that START with "auto" (any capitalization: AUTO, Auto, auto, aUtO...)
+// are skipped entirely — they represent automatic actions that don't need a message.
+function isAutoStep(v) {
+  return /^\s*auto\b/i.test(String(v || ""));
 }
 
 function firstLine(v) {
@@ -505,8 +738,8 @@ function buildGroupItem(itemNumber, rowData) {
   p3 = "";
   p4 = rowData.hazard || "";
   p5 = rowData.ppe || "";
-  instructionsVal = instructionsToTagValue(rowData.instructions);
-  paramVal = instructionsToTagValue(rowData.parameters);
+  instructionsVal = formatInstructionsText(rowData.instructions);
+  paramVal = normalizeNewlines(rowData.parameters);
 
   // Columns with no value show "N/A" (matches p11-p30 convention)
   const naIfBlank = v => (v === null || v === undefined || v === "") ? "N/A" : v;
@@ -527,7 +760,10 @@ ${buildTagListXml(instructionsVal, paramVal)}
 }
 
 function rowHasContent(rowData) {
-  return !!(rowData.instructions && rowData.instructions.trim() !== "");
+  const instr = rowData.instructions;
+  if (!instr || instr.trim() === "") return false;
+  if (isAutoStep(instr)) return false; // "AUTO" steps are skipped entirely
+  return true;
 }
 
 function buildResourceForBlock(block, userVal, resourceFolderVal, ts) {
@@ -630,10 +866,10 @@ function handleFile(file) {
   step3.classList.add("hidden");
 
   const reader = new FileReader();
-  reader.onload = (e) => {
+  reader.onload = async (e) => {
     try {
       const data = new Uint8Array(e.target.result);
-      const workbook = XLSX.read(data, { type: "array", cellText: true });
+      const workbook = await XLSX.readAsync(data);
       const result = parseWorkbook(workbook);
       if (!result.defaultSheet) {
         parseStatus.innerHTML = `<span style="color:var(--warn)">Could not find a Process Context table in any sheet of this workbook (looking for a row of "Specific" headers followed by an "Applicable" column). You can still pick a sheet manually below to double-check.</span>`;
